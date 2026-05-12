@@ -1,18 +1,23 @@
+
 // server/game/entities/Bullet.js
 
+import crypto from "crypto";
+
 export class Bullet {
-  constructor(x, y, angle) {
+  constructor(x, y, vx, vy) {
     this.x = x;
     this.y = y;
-    this.angle = angle;
-    this.speed = 8;
+
+    this.vx = vx;
+    this.vy = vy;
+
     this.radius = 3;
     this.id = crypto.randomUUID();
   }
 
   update() {
-    this.x += Math.cos(this.angle) * this.speed;
-    this.y += Math.sin(this.angle) * this.speed;
+    this.x += this.vx;
+    this.y += this.vy;
   }
 
   isOutOfBounds(width, height) {
@@ -24,20 +29,20 @@ export class Bullet {
     );
   }
 
-  // ✅ KLUCZOWA METODA – SERWER MUSI JĄ MIEĆ
   serialize() {
     return {
       id: this.id,
       x: this.x,
       y: this.y,
-      angle: this.angle
+      vx: this.vx,
+      vy: this.vy,
+      angle: Math.atan2(this.vy, this.vx)
     };
   }
 
   static fromState(s) {
-    const b = new Bullet(s.x, s.y, s.angle);
+    const b = new Bullet(s.x, s.y, s.vx, s.vy);
     b.id = s.id;
     return b;
   }
-
 }

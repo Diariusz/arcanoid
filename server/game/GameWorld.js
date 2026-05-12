@@ -16,11 +16,15 @@ export const GAME_STATE = {
   GAME_OVER: "game_over"
 };
 
+
 const POWERUP_DURATIONS = {
   double: 10000,
   triple: 8000,
-  cooling: 12000
+  cooling: 12000,
+  fastBullets: 10000,
+  speedBoost: 10000 // ✅ NOWE
 };
+
 
 const MAX_POWERUPS_ON_SCREEN = 2;
 
@@ -34,7 +38,7 @@ export class GameWorld {
     /* ===== CORE STATE ===== */
     this.state = GAME_STATE.MENU;
 
-    this.players = new Map(); // id -> Player
+    this.players = new Map(); // sessionId -> Player
 
     this.asteroids = [];
     this.bullets = [];
@@ -58,11 +62,15 @@ export class GameWorld {
     this.maxHeat = 100;
     this.overheated = false;
 
-    this.activePowerUps = {
-      double: 0,
-      triple: 0,
-      cooling: 0
-    };
+    
+  this.activePowerUps = {
+    double: 0,
+    triple: 0,
+    cooling: 0,
+    fastBullets: 0,
+    speedBoost: 0 // ✅ NOWE
+  };
+
 
     /* ===== SHOOTING ===== */
     this.lastShotTime = 0;
@@ -78,21 +86,36 @@ export class GameWorld {
     /* ===== UTILS ===== */
     this.events = [];
     this.tick = 0;
+
+   /* ===== GAME MODE / FLOW ===== */
+    this.mode = "solo";      // "solo" | "coop" | "pvp"
+    this.isGameOver = false; // sygnał końca gry
+
   }
 
   /* ================= PLAYERS ================= */
 
   addPlayer(player) {
-    this.players.set(player.id, player);
+    this.players.set(player.sessionId, player);
   }
 
-  removePlayer(id) {
-    this.players.delete(id);
+  removePlayer(sessionId) {
+    this.players.delete(sessionId);
   }
 
-  getPlayer(id = "local") {
-    return this.players.get(id);
+  getPlayer(sessionId) {
+    return this.players.get(sessionId);
   }
+
+  getPlayerBySocketId(socketId) {
+  for (const player of this.players.values()) {
+    if (player.id === socketId) {
+      return player;
+    }
+  }
+  return null;
+}
+
 
   /* ================= UPDATE LOOP ================= */
 
@@ -101,10 +124,18 @@ export class GameWorld {
 
     this.tick++;
 
+// respawn tick
+for (const p of this.players.values()) {
+  if (!p.alive && p.respawnAt && Date.now() >= p.respawnAt) {
+    this.respawnPlayer(p);
+    this.events.push({ type: "PLAYER_RESPAWN", playerId: p.id });
+  }
+}
+
     this.updatePowerUps(now);
 
     for (const player of this.players.values()) {
-      player.update(dt, this);
+      player.update(this);
     }
 
     this.updateBullets();
@@ -112,102 +143,160 @@ export class GameWorld {
     this.updateBoss();
     this.handleCollisions();
 
-    this.updateHeat();
+    this.updateHeat(now);
     this.updatePurgeLock();
     
+
 if (this.tick % 60 === 0) {
-  console.log(this.serialize().asteroids);
+  console.log("===== SERVER DEBUG TICK", this.tick, "=====");
+
+  console.log("PLAYERS:");
+  for (const player of this.players.values()) {
+    console.log({
+      sessionId: player.sessionId,
+      socketId: player.id,
+      x: Number(player.x.toFixed(1)),
+      y: Number(player.y.toFixed(1)),
+      vx: Number(player.vx.toFixed(2)),
+      vy: Number(player.vy.toFixed(2)),
+      a: Number(player.a.toFixed(2)),
+      disconnectedAt: player.disconnectedAt
+    });
+  }
+
+  console.log("ASTEROIDS:");
+  console.log(
+    this.asteroids.map(a => ({
+      id: a.id,
+      x: Number(a.x.toFixed(1)),
+      y: Number(a.y.toFixed(1)),
+      size: a.size,
+      speed: Number(a.speed.toFixed(2))
+    }))
+  );
 }
+
 
   }
 
   /* ================= SHOOTING ================= */
 
-  addBulletFromPlayer(player, now) {
-    if (!this.canShoot) return;
-    if (this.overheated) return;
-    if (this.bullets.length >= this.maxBullets) return;
-    if (now - this.lastShotTime < this.fireCooldown) return;
+addBulletFromPlayer(player, now) {
+  if (!player.alive) return;
+  if (!player.canShoot) return;
+  if (player.overheated) return;
+  if (this.bullets.length >= this.maxBullets) return; // limit globalny może zostać na start
 
-    this.lastShotTime = now;
+  const fast = (player.activePowerUps.fastBullets ?? 0) > now;
 
-    const triple = this.activePowerUps.triple > 0;
-    const double = this.activePowerUps.double > 0;
+  const baseCooldown = this.fireCooldown;
+  const effectiveCooldown = fast ? Math.max(80, baseCooldown * 0.65) : baseCooldown;
 
-    if (triple) {
-      this.spawnBullet(player, 0);
-      this.spawnBullet(player, 0.2);
-      this.spawnBullet(player, -0.2);
-    } else if (double) {
-      this.spawnBullet(player, 0.1);
-      this.spawnBullet(player, -0.1);
-    } else {
-      this.spawnBullet(player, 0);
-    }
+  if (now - player.lastShotTime < effectiveCooldown) return;
+  player.lastShotTime = now;
 
-    this.heat += 4;
+  const triple = (player.activePowerUps.triple ?? 0) > now;
+  const double = (player.activePowerUps.double ?? 0) > now;
 
-    if (this.heat >= this.maxHeat) {
-      this.overheated = true;
-      this.events.push({ type: "OVERHEAT" });
-    }
+  if (triple) {
+    this.spawnBullet(player, 0);
+    this.spawnBullet(player, 0.2);
+    this.spawnBullet(player, -0.2);
+  } else if (double) {
+    this.spawnBullet(player, 0.1);
+    this.spawnBullet(player, -0.1);
+  } else {
+    this.spawnBullet(player, 0);
   }
 
-  spawnBullet(player, angleOffset = 0) {
-    this.bullets.push(
-      new Bullet(
-        player.x,
-        player.y,
-        player.a + angleOffset
-      )
-    );
+  player.heat += fast ? 6 : 4;
+
+  if (player.heat >= player.maxHeat) {
+    player.overheated = true;
+    this.events.push({ type: "OVERHEAT", playerId: player.id });
   }
+}
 
-  attemptPurge(now) {
-    if (now - this.lastPurgeTime < this.purgeCooldown) return;
+spawnBullet(player, angleOffset = 0) {
+  const a = player.a + angleOffset;
 
-    this.heat = 0;
-    this.overheated = false;
+  const now = Date.now();
+  const fast = (player.activePowerUps.fastBullets ?? 0) > now;
 
-    this.canShoot = false;
-    this.purgeLockTimer = this.PURGE_LOCK_FRAMES;
-    this.lastPurgeTime = now;
+  const BASE_BULLET_SPEED = 14;
+  const mult = fast ? 1.8 : 1.0;
+  const bulletSpeed = BASE_BULLET_SPEED * mult;
 
-    this.events.push({ type: "PURGE" });
-  }
+  const vx = player.vx + Math.cos(a) * bulletSpeed;
+  const vy = player.vy + Math.sin(a) * bulletSpeed;
+
+  this.bullets.push(new Bullet(player.x, player.y, vx, vy));
+}
+
+
+
+attemptPurge(player, now) {
+  if (!player.alive) return;
+
+  // cooldown purge per-player
+  if (now - player.lastPurgeTime < this.purgeCooldown) return;
+
+  // reset heat/overheat tylko tego gracza
+  player.heat = 0;
+  player.overheated = false;
+
+  // lock shooting tylko dla tego gracza
+  player.canShoot = false;
+  player.purgeLockTimer = this.PURGE_LOCK_FRAMES;
+  player.lastPurgeTime = now;
+
+  this.events.push({ type: "PURGE", playerId: player.id });
+}
+
 
   /* ================= SYSTEMS ================= */
 
-  updatePowerUps(now) {
-    for (const key in this.activePowerUps) {
-      if (this.activePowerUps[key] > 0 && now > this.activePowerUps[key]) {
-        this.activePowerUps[key] = 0;
+
+
+  
+updatePowerUps(now) {
+  for (const p of this.players.values()) {
+    for (const key in p.activePowerUps) {
+      if (p.activePowerUps[key] > 0 && now > p.activePowerUps[key]) {
+        p.activePowerUps[key] = 0;
       }
     }
   }
+}
 
-  updateHeat() {
-    const cooling = this.activePowerUps.cooling > 0 ? 1.0 : 0.5;
+updateHeat(now) {
+  for (const p of this.players.values()) {
+    const coolingActive = (p.activePowerUps.cooling ?? 0) > now;
+    const cooling = coolingActive ? 1.0 : 0.5;
 
-    if (!this.overheated) {
-      this.heat = Math.max(0, this.heat - cooling);
+    if (!p.overheated) {
+      p.heat = Math.max(0, p.heat - cooling);
     } else {
-      this.heat -= cooling * 0.2;
-      if (this.heat <= 0) {
-        this.heat = 0;
-        this.overheated = false;
+      p.heat -= cooling * 0.2;
+      if (p.heat <= 0) {
+        p.heat = 0;
+        p.overheated = false;
       }
     }
   }
+}
 
-  updatePurgeLock() {
-    if (!this.canShoot) {
-      this.purgeLockTimer--;
-      if (this.purgeLockTimer <= 0) {
-        this.canShoot = true;
+updatePurgeLock() {
+  for (const p of this.players.values()) {
+    if (!p.canShoot) {
+      p.purgeLockTimer--;
+      if (p.purgeLockTimer <= 0) {
+        p.canShoot = true;
+        p.purgeLockTimer = 0;
       }
     }
   }
+}
 
   updateBullets() {
     for (let i = this.bullets.length - 1; i >= 0; i--) {
@@ -248,6 +337,41 @@ if (this.tick % 60 === 0) {
     this.handlePowerUpPickup();
   }
 
+respawnPlayer(player) {
+  // respawn w bezpiecznym miejscu (proste podejście)
+  for (let tries = 0; tries < 20; tries++) {
+    const x = Math.random() * this.width;
+    const y = Math.random() * this.height;
+
+    // unikaj respawnu w asteroidzie
+    const safe = (this.asteroids ?? []).every(a => Math.hypot(a.x - x, a.y - y) > (a.size + player.radius + 40));
+    if (!safe) continue;
+
+    player.x = x;
+    player.y = y;
+    player.vx = 0;
+    player.vy = 0;
+    player.a = -Math.PI / 2;
+
+    player.alive = true;
+    player.respawnAt = 0;
+
+    // wraca z częścią tarczy
+    player.shield = Math.max(30, Math.floor(player.maxShield * 0.5));
+
+    return;
+  }
+
+  // fallback jeśli nie znaleziono safe spot
+  player.x = this.width / 2;
+  player.y = this.height / 2;
+  player.vx = player.vy = 0;
+  player.a = -Math.PI / 2;
+  player.alive = true;
+  player.respawnAt = 0;
+  player.shield = Math.max(30, Math.floor(player.maxShield * 0.5));
+}
+
   handleBulletAsteroid() {
     for (let i = this.asteroids.length - 1; i >= 0; i--) {
       const a = this.asteroids[i];
@@ -277,81 +401,120 @@ if (this.tick % 60 === 0) {
     this.maybeDropPowerUp(a.x, a.y);
   }
 
-  handlePlayerAsteroid() {
-    for (const player of this.players.values()) {
-      for (let i = this.asteroids.length - 1; i >= 0; i--) {
-        const a = this.asteroids[i];
-        if (Math.hypot(a.x - player.x, a.y - player.y) < a.size + player.radius) {
-          this.asteroids.splice(i, 1);
-          this.shield -= a.size * 0.8;
-          this.events.push({ type: "PLAYER_HIT", playerId: player.id });
+handlePlayerAsteroid() {
+  for (const player of this.players.values()) {
+    if (!player.alive) continue;
+
+    for (let i = this.asteroids.length - 1; i >= 0; i--) {
+      const a = this.asteroids[i];
+
+      if (Math.hypot(a.x - player.x, a.y - player.y) < a.size + player.radius) {
+        this.asteroids.splice(i, 1);
+
+        // ✅ per-player dmg
+        player.shield -= a.size * 0.8;
+
+        this.events.push({ type: "PLAYER_HIT", playerId: player.id });
+
+        if (player.shield <= 0) {
+          player.alive = false;
+          player.respawnAt = Date.now() + 3000; // ✅ A: respawn po 3s
+          this.events.push({ type: "PLAYER_DEAD", playerId: player.id });
         }
       }
     }
   }
+}
 
-  handleEnemyBullets() {
-    for (const player of this.players.values()) {
-      for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
-        const b = this.enemyBullets[i];
-        if (Math.hypot(b.x - player.x, b.y - player.y) < b.radius + player.radius) {
-          this.enemyBullets.splice(i, 1);
-          this.shield -= this.boss?.getDamage() ?? 10;
-          this.events.push({ type: "PLAYER_HIT", playerId: player.id });
+handleEnemyBullets() {
+  for (const player of this.players.values()) {
+    if (!player.alive) continue;
+
+    for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
+      const b = this.enemyBullets[i];
+
+      if (Math.hypot(b.x - player.x, b.y - player.y) < (b.radius ?? 4) + player.radius) {
+        this.enemyBullets.splice(i, 1);
+
+        player.shield -= this.boss?.getDamage() ?? 10;
+        this.events.push({ type: "PLAYER_HIT", playerId: player.id });
+
+        if (player.shield <= 0) {
+          player.alive = false;
+          player.respawnAt = Date.now() + 3000;
+          this.events.push({ type: "PLAYER_DEAD", playerId: player.id });
         }
       }
     }
   }
+}
 
-  handlePowerUpPickup() {
-    for (const player of this.players.values()) {
-      for (let i = this.powerUps.length - 1; i >= 0; i--) {
-        const p = this.powerUps[i];
-        if (
-          Math.hypot(p.x - player.x, p.y - player.y) <
-          p.radius + player.radius
-        ) {
-          this.activatePowerUp(p.type, Date.now());
-          this.powerUps.splice(i, 1);
-        }
+
+handlePowerUpPickup() {
+  for (const player of this.players.values()) {
+    if (!player.alive) continue;
+
+    for (let i = this.powerUps.length - 1; i >= 0; i--) {
+      const p = this.powerUps[i];
+      if (Math.hypot(p.x - player.x, p.y - player.y) < p.radius + player.radius) {
+        this.activatePowerUp(player, p.type, Date.now());
+        this.powerUps.splice(i, 1);
       }
     }
   }
+}
 
-  activatePowerUp(type, now) {
-    if (POWERUP_DURATIONS[type]) {
-      this.activePowerUps[type] = now + POWERUP_DURATIONS[type];
-    }
-
-    if (type === "shield") {
-      this.shield = this.maxShield;
-    }
-
-    this.events.push({ type: "POWERUP_PICKED", power: type });
+  activatePowerUp(player, type, now) {
+  // durations masz w GameWorld (OK)
+  if (POWERUP_DURATIONS[type]) {
+    player.activePowerUps[type] = now + POWERUP_DURATIONS[type];
   }
 
-  maybeDropPowerUp(x, y) {
-    if (this.powerUps.length >= MAX_POWERUPS_ON_SCREEN) return;
-    if (Math.random() > 0.12) return;
+  if (type === "shield") {
+    player.shield = player.maxShield;
+  }
 
-    const table = [];
-    if (this.level >= 2) table.push({ type: "double", weight: 3 });
-    if (this.level >= 3) table.push({ type: "cooling", weight: 2 });
-    if (this.level >= 4) table.push({ type: "triple", weight: 2 });
-    if (this.level >= 5) table.push({ type: "shield", weight: 1 });
+  this.events.push({ type: "POWERUP_PICKED", power: type, playerId: player.id });
+}
 
-    if (!table.length) return;
+maybeDropPowerUp(x, y) {
+  if (this.powerUps.length >= MAX_POWERUPS_ON_SCREEN) return;
 
-    let roll = Math.random() * table.reduce((s, e) => s + e.weight, 0);
+  // Drop chance (test: 0.60, docelowo np. 0.20)
+  const DROP_CHANCE = 0.60;
+  if (Math.random() > DROP_CHANCE) return;
 
-    for (const entry of table) {
-      roll -= entry.weight;
-      if (roll <= 0) {
-        this.powerUps.push(new PowerUp(x, y, entry.type));
-        return;
-      }
+  const table = [];
+
+  // Level 1+
+  if (this.level >= 1) table.push({ type: "fastBullets", weight: 3 });
+  if (this.level >= 1) table.push({ type: "speedBoost", weight: 3 });
+
+  // Level 2+
+  if (this.level >= 2) table.push({ type: "double", weight: 2 });
+
+  // Level 3+
+  if (this.level >= 3) table.push({ type: "cooling", weight: 2 });
+
+  // Level 4+
+  if (this.level >= 4) table.push({ type: "triple", weight: 1 });
+
+  // Level 5+
+  if (this.level >= 5) table.push({ type: "shield", weight: 1 });
+
+  if (!table.length) return;
+
+  let roll = Math.random() * table.reduce((s, e) => s + e.weight, 0);
+
+  for (const entry of table) {
+    roll -= entry.weight;
+    if (roll <= 0) {
+      this.powerUps.push(new PowerUp(x, y, entry.type));
+      return;
     }
   }
+}
+
 
   /* ================= HELPERS ================= */
 
@@ -362,17 +525,25 @@ if (this.tick % 60 === 0) {
 
   /* ================= SERIALIZATION ================= */
 
-  serialize() {
-    return {
-      state: this.state,
-      score: this.score,
-      level: this.level,
-      players: [...this.players.values()].map(p => p.serialize()),
-      asteroids: this.asteroids.map(a => a.serialize()),
-      bullets: this.bullets.map(b => b.serialize()),
-      boss: this.boss?.serialize() ?? null
-    };
-  }
+serialize() {
+  return {
+    state: this.state,
+    score: this.score,
+    level: this.level,
+
+    
+// ✅ ważne dla kamery na kliencie
+    width: this.width,
+    height: this.height,
+
+
+    players: [...this.players.values()].map(p => p.serialize()),
+    asteroids: this.asteroids.map(a => a.serialize()),
+    bullets: this.bullets.map(b => b.serialize()),
+    powerUps: this.powerUps.map(p => p.serialize()),
+    boss: this.boss?.serialize() ?? null
+  };
+}
 
 applyState(snapshot) {
   // ----- CORE -----

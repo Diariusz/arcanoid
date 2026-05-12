@@ -3,6 +3,26 @@ import { STAGES } from "./config/stages.js";
 import Asteroid from "./entities/Asteroid.js";
 import Boss from "./entities/Boss.js";
 
+function clamp(v, a, b) {
+  return Math.max(a, Math.min(b, v));
+}
+
+function teamCenter(world) {
+  const alive = [...world.players.values()].filter(p => p.alive);
+  const arr = alive.length ? alive : [...world.players.values()];
+  if (!arr.length) return { x: world.width / 2, y: world.height / 2 };
+
+  const sx = arr.reduce((s, p) => s + p.x, 0);
+  const sy = arr.reduce((s, p) => s + p.y, 0);
+  return { x: sx / arr.length, y: sy / arr.length };
+}
+
+function randomPointInRing(cx, cy, rMin, rMax) {
+  const ang = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(Math.random() * (rMax * rMax - rMin * rMin) + rMin * rMin);
+  return { x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r };
+}
+
 export class StageManager {
   constructor(world) {
     this.world = world;
@@ -15,6 +35,8 @@ export class StageManager {
   get currentStage() {
     return STAGES[this.stageIndex] ?? null;
   }
+
+  
 
   update() {
     switch (this.state) {
@@ -115,19 +137,43 @@ export class StageManager {
   /* ================= SPAWN ================= */
 
   spawnAsteroids(count) {
-    this.world.isBossFight = false;
-    this.world.boss = null;
+  this.world.isBossFight = false;
+  this.world.boss = null;
 
-    for (let i = 0; i < count; i++) {
-      this.world.addAsteroid(
-        new Asteroid(
-          Math.random() * this.world.width,
-          Math.random() * this.world.height,
-          3
-        )
-      );
+  const { x: cx, y: cy } = teamCenter(this.world);
+
+  const rMin = 500;   // minimum odległości od graczy (nie spawnuj na nich)
+  const rMax = 1200;  // maksimum (żeby nie było “czekania”)
+
+  for (let i = 0; i < count; i++) {
+    let pos = null;
+
+    for (let tries = 0; tries < 20; tries++) {
+      const p = randomPointInRing(cx, cy, rMin, rMax);
+
+      // clamp do granic świata/sektora
+      const x = clamp(p.x, 60, this.world.width - 60);
+      const y = clamp(p.y, 60, this.world.height - 60);
+
+      // opcjonalnie: unikaj zbyt bliskich spawnów między asteroidami
+      const ok = this.world.asteroids.every(a => Math.hypot(a.x - x, a.y - y) > (a.size + 80));
+      if (ok) {
+        pos = { x, y };
+        break;
+      }
     }
+
+    if (!pos) {
+      // fallback w pobliżu środka drużyny
+      pos = {
+        x: clamp(cx + (Math.random() * 200 - 100), 60, this.world.width - 60),
+        y: clamp(cy + (Math.random() * 200 - 100), 60, this.world.height - 60)
+      };
+    }
+
+    this.world.addAsteroid(new Asteroid(pos.x, pos.y, 3));
   }
+}
 
   spawnBoss(level) {
     this.world.isBossFight = true;

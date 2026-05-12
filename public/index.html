@@ -3,12 +3,44 @@
 <head>
   <meta charset="UTF-8">
   <title>Asteroids</title>
-  <style>
-    body { margin: 0; overflow: hidden; background: black; }
-  </style>
+  <!-- CSS -->
+  <link rel="stylesheet" href="css/main.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
 <body>
-  <canvas id="game"></canvas>
+<div id="startScreen" class="screen">
+  <h1 class="title">ASTEROIDS</h1>
+  <p class="subtitle">Multiplayer Arcade</p>
+
+  <div id="modeSelect">
+    <button class="primary modeBtn" data-mode="solo">PLAY SOLO</button>
+    <button class="primary modeBtn" data-mode="coop">PLAY COOP (2)</button>
+    <button class="primary modeBtn" data-mode="pvp">PLAY PvP (1v1)</button>
+  </div>
+
+  <div class="footer">
+    <span>© 2026</span>
+  </div>
+</div>
+
+<div id="lobbyScreen" class="screen hidden">
+  <h2>LOBBY</h2>
+
+  <p id="lobbyInfo">Waiting for players…</p>
+
+  <button id="readyBtn" class="primary">READY</button>
+</div>
+
+<div id="gameOverScreen" class="screen hidden">
+  <h2>GAME OVER</h2>
+
+  <p id="finalScore"></p>
+
+  <button id="playAgainBtn" class="primary">PLAY AGAIN</button>
+  <button id="backToMenuBtn" class="primary">BACK TO MENU</button>
+</div>
+
+<canvas id="game"></canvas>
 
   <!-- WAŻNE -->
   <script type="module" src="./main.js"></script>

@@ -119,6 +119,35 @@ if (this.tick % 60 === 0) {
   console.log(this.serialize().asteroids);
 }
 
+if (this.tick % 60 === 0) {
+  console.log("===== SERVER DEBUG TICK", this.tick, "=====");
+
+  console.log("PLAYERS:");
+  for (const player of this.players.values()) {
+    console.log({
+      sessionId: player.sessionId,
+      socketId: player.id,
+      x: Number(player.x.toFixed(1)),
+      y: Number(player.y.toFixed(1)),
+      vx: Number(player.vx.toFixed(2)),
+      vy: Number(player.vy.toFixed(2)),
+      a: Number(player.a.toFixed(2)),
+      disconnectedAt: player.disconnectedAt
+    });
+  }
+
+  console.log("ASTEROIDS:");
+  console.log(
+    this.asteroids.map(a => ({
+      id: a.id,
+      x: Number(a.x.toFixed(1)),
+      y: Number(a.y.toFixed(1)),
+      size: a.size,
+      speed: Number(a.speed.toFixed(2))
+    }))
+  );
+}
+
   }
 
   /* ================= SHOOTING ================= */

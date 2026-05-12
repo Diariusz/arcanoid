@@ -1,84 +1,83 @@
 // engine/entities/Player.js
+
 export class Player {
   constructor(x, y) {
-    this.id = "local"; // ✅ WAŻNE
+    this.id = null;
+
+    // --- transform ---
     this.x = x;
     this.y = y;
+
+    // --- velocity (WEKTOR, NIE speed) ---
     this.vx = 0;
     this.vy = 0;
+
+    // --- angle ---
     this.a = -Math.PI / 2;
 
     this.radius = 15;
-    this.speed = 0;
   }
 
-  applyInput(input, world) {
-    // OBRÓT
-    if (input.rotateLeft) this.a -= 0.07;
-    if (input.rotateRight) this.a += 0.07;
+  /* ================= INPUT ================= */
+  applyInput(input) {
+    const TURN_SPEED = 0.07;
+    const ACCEL = 0.09;
 
-    // GAZ
-    if (input.thrustForward) {
-      this.speed = Math.min(this.speed + 0.52, 4);
-    }
+    // ----- ROTATION -----
+    if (input.rotateLeft)  this.a -= TURN_SPEED;
+    if (input.rotateRight) this.a += TURN_SPEED;
 
-    if (input.thrustBackward) {
-      this.speed = Math.max(this.speed - 0.12, -2);
-    }
+    // ----- THRUST -----
+    let thrust = 0;
 
-    // TAP = obrót w stronę punktu
-    if (input.touchAngle) {
-      const target = Math.atan2(
-        input.touchAngle.y - this.y,
-        input.touchAngle.x - this.x
-      );
-      const diff =
-        ((target - this.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      this.a += diff * 0.25;
-    }
+    if (input.thrustForward)  thrust = ACCEL;
+    if (input.thrustBackward) thrust = -ACCEL * 0.6;
 
-    if (input.fire) {
-      world.addBulletFromPlayer(this);
-    }
-
-    if (input.purge) {
-      world.attemptPurge();
+    if (thrust !== 0) {
+      this.vx += Math.cos(this.a) * thrust;
+      this.vy += Math.sin(this.a) * thrust;
     }
   }
 
-  update(dt, world) {
+  /* ================= UPDATE ================= */
+  update(world) {
+    const DRAG = 0.985;
 
-this.x += Math.sin(this.a) * this.speed;
-this.y -= Math.cos(this.a) * this.speed;
+    // ----- MOVE -----
+    this.x += this.vx;
+    this.y += this.vy;
 
+    // ----- DAMPING -----
+    this.vx *= DRAG;
+    this.vy *= DRAG;
 
-    this.speed *= 0.98;
-
-    // wrap
+    // ----- WORLD WRAP -----
     if (this.x < 0) this.x += world.width;
     if (this.x > world.width) this.x -= world.width;
     if (this.y < 0) this.y += world.height;
     if (this.y > world.height) this.y -= world.height;
   }
 
+  /* ================= SERIALIZATION ================= */
   serialize() {
     return {
       id: this.id,
       x: this.x,
       y: this.y,
+      vx: this.vx,
+      vy: this.vy,
       a: this.a,
-      speed: this.speed,
       radius: this.radius
     };
   }
 
-static fromState(state) {
+  static fromState(state) {
     const p = new Player(state.x, state.y);
     p.id = state.id;
-    p.a = state.a;
-    p.speed = state.speed;
+    p.vx = state.vx;
+    p.vy = state.vy;
+    p.a  = state.a;
     p.radius = state.radius;
     return p;
   }
-
 }

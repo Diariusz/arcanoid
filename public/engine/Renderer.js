@@ -11,47 +11,87 @@ export class Renderer {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
-  render(world, fx, net = null) {
-    this.clear();
+render(world, fx, net = null) {
+  this.clear();
+  this.drawBackground(net?.camera);
 
-    this.drawBackground();
+  // ===== WORLD SPACE (kamera) =====
+  const cam = net?.camera ?? { x: 0, y: 0 };
 
-    
-for (const player of world.players.values()) {
-  if (
-    net &&
-    net.localPlayerId === player.id &&
-    net.predictedPlayer
-  ) {
-    this.drawPlayer({
-      ...player,
-      x: net.predictedPlayer.x,
-      y: net.predictedPlayer.y,
-      a: net.predictedPlayer.a
-    });
-  } else {
+  this.ctx.save();
+  this.ctx.translate(-cam.x, -cam.y);
+
+  // wszystko co jest w świecie rysujemy w space świata
+  this.drawAsteroids(world.asteroids ?? []);
+  this.drawPowerUps?.(world.powerUps ?? []);
+  this.drawBullets(world.bullets ?? []);
+  this.drawEnemyBullets(world.enemyBullets ?? []);
+  this.drawBoss(world.boss);
+
+  for (const player of world.players.values()) {
+    // jeśli nadal chcesz specjalnie local predicted – możesz zostawić, ale u Ciebie
+    // i tak doklejasz predictedPlayer do renderWorld.players, więc to może być zbędne.
     this.drawPlayer(player);
   }
+
+  this.ctx.restore();
+
+  // ===== UI SPACE (bez kamery) =====
+  this.drawUI(world);
 }
 
 
 
-    this.drawAsteroids(world.asteroids);
-    this.drawBullets(world.bullets);
-    this.drawEnemyBullets(world.enemyBullets);
-    this.drawBoss(world.boss);
-    this.drawUI(world);
-
-
-  }
-
   /* ================= BACKGROUND ================= */
 
-  drawBackground() {
-    const ctx = this.ctx;
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+drawParallaxLayer(img, camera, factor = 0.1, alpha = 0.25) {
+  if (!img || !img.complete || img.naturalWidth === 0) return;
+
+  const ctx = this.ctx;
+  const cw = this.canvas.width;
+  const ch = this.canvas.height;
+
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+
+  // przesunięcie wynikające z kamery (paralaksa)
+  // mniejszy factor = warstwa “dalsza”
+  const ox = -((camera?.x ?? 0) * factor) % iw;
+  const oy = -((camera?.y ?? 0) * factor) % ih;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // tile (kafelkujemy, aby nie było pustych krawędzi)
+  for (let x = ox - iw; x < cw + iw; x += iw) {
+    for (let y = oy - ih; y < ch + ih; y += ih) {
+      ctx.drawImage(img, x, y);
+    }
   }
+
+  ctx.restore();
+}
+
+drawBackground(camera = { x: 0, y: 0 }) {
+  const ctx = this.ctx;
+
+  // baza: czarne tło
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+  // warstwy mgławic (paralaksa)
+  const bg = this.assets.background ?? {};
+  this.drawParallaxLayer(bg.nebula1, camera, 0.08, 0.22);
+  this.drawParallaxLayer(bg.nebula2, camera, 0.14, 0.28);
+  this.drawParallaxLayer(bg.nebula3, camera, 0.22, 0.20);
+
+  // delikatny “film grain” / przyciemnienie (opcjonalnie)
+  ctx.save();
+  ctx.globalAlpha = 0.10;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+  ctx.restore();
+}
 
   /* ================= PLAYER ================= */
 
@@ -175,7 +215,7 @@ for (const player of world.players.values()) {
     const ctx = this.ctx;
     ctx.fillStyle = "white";
     ctx.font = "18px Consolas";
-    ctx.fillText(`Wynik: ${world.score}`, 20, 30);
+    //ctx.fillText(`Wynik: ${world.score}`, 20, 30);
 
     // boss HP
     if (world.isBossFight && world.boss) {
@@ -205,4 +245,44 @@ for (const player of world.players.values()) {
     ctx.strokeStyle = "white";
     ctx.strokeRect(x, y, barW, barH);
   }
+
+    /* ================= POWER-UPS ================= */
+
+drawPowerUps(powerUps = []) {
+  const ctx = this.ctx;
+  if (!powerUps || powerUps.length === 0) return;
+
+  for (const p of powerUps) {
+    const r = p.radius ?? 14;
+    const size = r * 2;
+
+    // assets.powerUps[type]
+    const img = this.assets?.powerUps?.[p.type] ?? null;
+
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, p.x - r, p.y - r, size, size);
+    } else {
+      // fallback: kółko + literka, jeśli obrazek się nie załadował
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(0,0,0,0.85)";
+      ctx.font = "12px monospace";
+
+      const letter =
+        p.type === "fastBullets" ? "F" :
+        p.type === "double" ? "D" :
+        p.type === "triple" ? "T" :
+        p.type === "cooling" ? "C" :
+        p.type === "shield" ? "S" : "?";
+
+      ctx.fillText(letter, p.x - 4, p.y + 4);
+      ctx.restore();
+    }
+  }
+}
+
 }
